@@ -1,4 +1,4 @@
-# Step 1 - Data Viability Gate (Traffic Hotspots PoC)
+# Step 1 - Data Viability Gate (Traffic Hotspots Beta)
 
 Date: 2026-03-01
 
@@ -31,5 +31,5 @@ Date: 2026-03-01
 - Severity values (`VAKAV_A`) observed: `1`, `2`, `3`
 
 ## Gate decision
-- **PASS for PoC V1 (map + hotspots):** yes
+- **PASS for Beta V1 (map + hotspots):** yes
 - **Known limitation:** this export does not include month/day/hour timestamps, so V1 can do yearly filters but not detailed time-of-day filtering without a richer source.

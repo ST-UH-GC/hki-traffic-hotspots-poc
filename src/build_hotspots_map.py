@@ -18,7 +18,7 @@ OUTPUT_DIR = ROOT / "output"
 HOTSPOTS_CSV = OUTPUT_DIR / "hotspots.csv"
 HOTSPOTS_RECENT_CSV = OUTPUT_DIR / "hotspots_recent.csv"
 TOP_HOTSPOTS_RECENT_CSV = OUTPUT_DIR / "top_hotspots_recent.csv"
-MAP_HTML = OUTPUT_DIR / "traffic_hotspots_poc.html"
+MAP_HTML = OUTPUT_DIR / "traffic_hotspots_beta.html"
 HOTSPOT_NAME_CACHE = ROOT / "data" / "processed" / "hotspot_name_cache.json"
 
 # Approximate grid size for hotspot aggregation.
@@ -350,7 +350,7 @@ def reverse_geocode_name(lat, lon, timeout=8):
         "zoom": "17",
         "accept-language": "fi,sv,en",
     }
-    headers = {"User-Agent": "hki-traffic-hotspots-poc/1.0"}
+    headers = {"User-Agent": "hki-traffic-hotspots-beta/1.0"}
     resp = requests.get(url, params=params, headers=headers, timeout=timeout)
     resp.raise_for_status()
     return _compose_localized_name(resp.json())
@@ -511,7 +511,7 @@ def add_method_note(map_obj):
         max-width: 320px;
     " id="method-box">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-        <b>Hotspot method (PoC V1)</b>
+        <b>Hotspot method (Beta V1)</b>
         <button id="method-toggle" aria-expanded="true" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Hide</button>
       </div>
       <div id="method-content">

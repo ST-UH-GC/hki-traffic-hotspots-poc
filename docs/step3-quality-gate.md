@@ -47,4 +47,4 @@ Create a clean, map-ready dataset and quantify data loss/quality before hotspot 
 
 ## Gate decision
 - **PASS**
-- Data retention is very high and suitable for PoC V1 hotspot map generation.
+- Data retention is very high and suitable for Beta V1 hotspot map generation.

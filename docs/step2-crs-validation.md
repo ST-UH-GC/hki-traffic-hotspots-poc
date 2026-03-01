@@ -21,7 +21,7 @@ Verify that source coordinates can be transformed into map-ready WGS84 (`lat/lon
 
 ## Gate decision
 - **PASS**
-- Use source CRS `EPSG:3879` -> target CRS `EPSG:4326` for PoC V1 map pipeline.
+- Use source CRS `EPSG:3879` -> target CRS `EPSG:4326` for Beta V1 map pipeline.
 
 ## Artifacts
 - Transformed sample output: `poc-traffic-hotspots/data/processed/accidents_latlon_sample.csv` (2,000 rows)

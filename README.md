@@ -1,10 +1,10 @@
-# Helsinki Traffic Hotspots PoC (V1)
+# Helsinki Traffic Hotspots Beta (V1)
 
-This PoC builds an interactive Helsinki traffic-accident hotspot map from open city data.
+This beta build provides an interactive Helsinki traffic-accident hotspot map from open city data.
 
 ## What you get
 
-- `output/traffic_hotspots_poc.html`: draggable + zoomable interactive map
+- `output/traffic_hotspots_beta.html`: draggable + zoomable interactive map
 - `output/hotspots.csv`: ranked hotspot grid cells (all years)
 - `output/hotspots_recent.csv`: ranked hotspot grid cells (recent 5 years)
 - `output/top_hotspots_recent.csv`: top recent hotspots for quick reporting
@@ -29,7 +29,7 @@ make all
 Then open:
 
 ```bash
-open output/traffic_hotspots_poc.html
+open output/traffic_hotspots_beta.html
 ```
 
 ## One-command rebuild (if setup already done)
@@ -53,7 +53,7 @@ make all
   - `output/hotspots.csv` (all years)
   - `output/hotspots_recent.csv` (recent 5 years)
   - `output/top_hotspots_recent.csv` (top rows only)
-- Builds two map layers in `output/traffic_hotspots_poc.html`:
+- Builds two map layers in `output/traffic_hotspots_beta.html`:
   - all years
   - one selectable layer per year (dropdown in map UI)
 - Marker color is count-based (light-to-dark pink buckets)
@@ -63,7 +63,7 @@ make all
 - On-map explainer documents severity levels and color thresholds
 - Localized hotspot names are reverse-geocoded and cached in `data/processed/hotspot_name_cache.json`
 
-## Current PoC limitations
+## Current beta limitations
 
 - No month/day/hour fields in this specific CSV export, so no time-of-day filtering yet
 - V1 hotspot score is concentration-based (not a full traffic exposure/risk model)

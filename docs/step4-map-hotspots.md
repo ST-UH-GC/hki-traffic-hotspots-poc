@@ -3,7 +3,7 @@
 Date: 2026-03-01
 
 ## Objective
-Produce PoC V1 outputs:
+Produce Beta V1 outputs:
 - Grid-based hotspot ranking
 - Interactive draggable/zoomable map with heat layer and hotspot markers
 
@@ -18,7 +18,7 @@ Produce PoC V1 outputs:
 
 ## Output files
 - Hotspot table: `poc-traffic-hotspots/output/hotspots.csv`
-- Interactive map: `poc-traffic-hotspots/output/traffic_hotspots_poc.html`
+- Interactive map: `poc-traffic-hotspots/output/traffic_hotspots_beta.html`
 
 ## Run command
 From `poc-traffic-hotspots`:
@@ -38,4 +38,4 @@ python src/build_hotspots_map.py
 
 ## Gate decision
 - **PASS**
-- PoC V1 map is generated and ready for local viewing in browser.
+- Beta V1 map is generated and ready for local viewing in browser.

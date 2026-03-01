@@ -28,4 +28,4 @@ Allow users to select a specific year from a dropdown without major refactoring.
 
 ## Gate decision
 - **PASS**
-- Year-level exploration is now interactive and remains PoC-simple.
+- Year-level exploration is now interactive and remains Beta-simple.

@@ -1,4 +1,4 @@
-# Step 6 - PoC Usability Polish
+# Step 6 - Beta Usability Polish
 
 Date: 2026-03-01
 
@@ -43,4 +43,4 @@ Improve interpretability without major architecture changes.
 
 ## Gate decision
 - **PASS**
-- PoC remains simple to run while producing clearer, presentation-ready results.
+- Beta remains simple to run while producing clearer, presentation-ready results.
