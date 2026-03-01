@@ -56,7 +56,10 @@ make all
 - Builds two map layers in `output/traffic_hotspots_poc.html`:
   - all years
   - one selectable layer per year (dropdown in map UI)
-- Popups include rank, count, weighted score, and severity mix (1/2/3)
+- Marker color is count-based (light-to-dark pink buckets)
+- Popup includes rank, count, weighted score, severity mix (1/2/3), and type-code totals
+- Mouseover tooltip includes a pie chart with vehicle-type mix (MA/PP/JK/MP)
+- On-map explainer documents severity levels and color thresholds
 
 ## Current PoC limitations
 
