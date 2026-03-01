@@ -292,24 +292,44 @@ def add_method_note(map_obj):
         background: white;
         border: 1px solid #999;
         border-radius: 6px;
-        padding: 10px 12px;
+        padding: 8px 10px;
         font-size: 12px;
         max-width: 320px;
-    ">
-      <b>Hotspot method (PoC V1)</b><br>
-      Grid size: {GRID_SIZE_DEG} deg<br>
-      Severity weights: 1=1.0, 2=2.0, 3=4.0<br>
-      Severity levels in this map: 1 = lower, 2 = medium, 3 = highest<br>
-      Vehicle-type codes: MA motor vehicle, PP bicycle, JK pedestrian, MP moped/motorcycle<br>
-      Marker color buckets: 1-10, 11-30, 31-60, 61-120, 121+ incidents<br>
-      Layers: all years + single-year dropdown<br>
-      Note: concentration-based score, not exposure-adjusted risk.
+    " id="method-box">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <b>Hotspot method (PoC V1)</b>
+        <button id="method-toggle" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Hide</button>
+      </div>
+      <div id="method-content">
+        Grid size: {GRID_SIZE_DEG} deg<br>
+        Severity weights: 1=1.0, 2=2.0, 3=4.0<br>
+        Severity levels in this map: 1 = lower, 2 = medium, 3 = highest<br>
+        Vehicle-type codes: MA motor vehicle, PP bicycle, JK pedestrian, MP moped/motorcycle<br>
+        Marker color buckets: 1-10, 11-30, 31-60, 61-120, 121+ incidents<br>
+        Heat colors (blue/teal/green/yellow) show local intensity in the heat layer<br>
+        Layers: all years + single-year and range controls<br>
+        Note: concentration-based score, not exposure-adjusted risk.
+      </div>
     </div>
+    <script>
+    window.addEventListener('load', function() {{
+      var toggleBtn = document.getElementById('method-toggle');
+      var content = document.getElementById('method-content');
+      if (!toggleBtn || !content) {{
+        return;
+      }}
+      toggleBtn.addEventListener('click', function() {{
+        var hidden = content.style.display === 'none';
+        content.style.display = hidden ? 'block' : 'none';
+        toggleBtn.textContent = hidden ? 'Hide' : 'Show';
+      }});
+    }});
+    </script>
     """
     map_obj.get_root().html.add_child(folium.Element(html))
 
 
-def add_year_dropdown(map_obj, map_name, layer_name_pairs, default_label):
+def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, default_label, year_min, year_max):
     options_html = []
     for label, _ in layer_name_pairs:
         selected = " selected" if label == default_label else ""
@@ -321,6 +341,12 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, default_label):
         safe_label = label.replace("'", "\\'")
         layer_entries.append(f"'{safe_label}': {layer_var}")
     layer_map_js = ",\n".join(layer_entries)
+
+    year_entries = []
+    for year, layer_var in year_layer_pairs:
+        year_entries.append(f"{year}: {layer_var}")
+    year_map_js = ",\n".join(year_entries)
+
     safe_default = default_label.replace("'", "\\'")
 
     html = f"""
@@ -332,12 +358,29 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, default_label):
         background: white;
         border: 1px solid #999;
         border-radius: 6px;
-        padding: 8px 10px;
+        padding: 8px 10px 10px 10px;
         font-size: 12px;
         box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+        min-width: 280px;
     ">
-      <label for="year-layer-select" style="font-weight: 600; margin-right: 8px;">View:</label>
-      <select id="year-layer-select" style="font-size: 12px;">{options}</select>
+      <label for="year-layer-select" style="font-weight: 600; margin-right: 8px;">Single year:</label>
+      <select id="year-layer-select" style="font-size: 12px; width: 165px;">{options}</select>
+      <div style="margin-top: 8px; border-top: 1px solid #ddd; padding-top: 8px;">
+        <div style="font-weight: 600; margin-bottom: 4px;">Year range (slider)</div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+          <span style="width:44px;">From</span>
+          <input type="range" id="year-from" min="{year_min}" max="{year_max}" value="{year_min}" style="flex:1;">
+          <span id="year-from-value">{year_min}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <span style="width:44px;">To</span>
+          <input type="range" id="year-to" min="{year_min}" max="{year_max}" value="{year_max}" style="flex:1;">
+          <span id="year-to-value">{year_max}</span>
+        </div>
+        <button id="year-range-apply" style="font-size: 12px; padding: 3px 8px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">
+          Apply range
+        </button>
+      </div>
     </div>
     <script>
     window.addEventListener('load', function() {{
@@ -345,26 +388,68 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, default_label):
       var layers = {{
         {layer_map_js}
       }};
+      var yearLayers = {{
+        {year_map_js}
+      }};
 
-      function showLayer(label) {{
+      function clearLayers() {{
         Object.keys(layers).forEach(function(key) {{
           var layer = layers[key];
           if (mapRef.hasLayer(layer)) {{
             mapRef.removeLayer(layer);
           }}
         }});
+      }}
+
+      function showLayer(label) {{
+        clearLayers();
         if (layers[label]) {{
           mapRef.addLayer(layers[label]);
         }}
       }}
 
+      function showRange(fromYear, toYear) {{
+        clearLayers();
+        var from = Math.min(fromYear, toYear);
+        var to = Math.max(fromYear, toYear);
+        Object.keys(yearLayers).forEach(function(y) {{
+          var yearNum = parseInt(y, 10);
+          if (yearNum >= from && yearNum <= to) {{
+            mapRef.addLayer(yearLayers[y]);
+          }}
+        }});
+      }}
+
       var select = document.getElementById('year-layer-select');
+      var fromInput = document.getElementById('year-from');
+      var toInput = document.getElementById('year-to');
+      var fromValue = document.getElementById('year-from-value');
+      var toValue = document.getElementById('year-to-value');
+      var applyBtn = document.getElementById('year-range-apply');
       if (!select) {{
         return;
       }}
       select.addEventListener('change', function(e) {{
         showLayer(e.target.value);
       }});
+
+      if (fromInput && fromValue) {{
+        fromInput.addEventListener('input', function(e) {{
+          fromValue.textContent = e.target.value;
+        }});
+      }}
+      if (toInput && toValue) {{
+        toInput.addEventListener('input', function(e) {{
+          toValue.textContent = e.target.value;
+        }});
+      }}
+      if (applyBtn && fromInput && toInput) {{
+        applyBtn.addEventListener('click', function() {{
+          var from = parseInt(fromInput.value, 10);
+          var to = parseInt(toInput.value, 10);
+          showRange(from, to);
+        }});
+      }}
 
       showLayer('{safe_default}');
     }});
@@ -379,6 +464,7 @@ def build_map(all_points, layer_specs):
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="CartoDB positron")
     layer_name_pairs = []
+    year_layer_pairs = []
     for idx, spec in enumerate(layer_specs):
         layer = add_hotspot_layer(
             map_obj=m,
@@ -389,12 +475,17 @@ def build_map(all_points, layer_specs):
             show=(idx == 0),
         )
         layer_name_pairs.append((spec["label"], layer.get_name()))
+        if spec.get("year") is not None:
+            year_layer_pairs.append((spec["year"], layer.get_name()))
 
     add_year_dropdown(
         map_obj=m,
         map_name=m.get_name(),
         layer_name_pairs=layer_name_pairs,
+        year_layer_pairs=year_layer_pairs,
         default_label=layer_specs[0]["label"],
+        year_min=min(y for y, _ in year_layer_pairs),
+        year_max=max(y for y, _ in year_layer_pairs),
     )
 
     add_method_note(m)
@@ -442,6 +533,7 @@ def main():
             {
                 "label": f"Year {year}",
                 "year_label": str(year),
+                "year": year,
                 "points": year_points,
                 "hotspots": year_hotspots,
             }
