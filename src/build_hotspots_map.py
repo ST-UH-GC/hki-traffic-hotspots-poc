@@ -3,10 +3,12 @@ import csv
 import html
 import json
 import math
+import time
 from collections import defaultdict
 from pathlib import Path
 
 import folium
+import requests
 from folium.plugins import HeatMap
 
 
@@ -17,11 +19,13 @@ HOTSPOTS_CSV = OUTPUT_DIR / "hotspots.csv"
 HOTSPOTS_RECENT_CSV = OUTPUT_DIR / "hotspots_recent.csv"
 TOP_HOTSPOTS_RECENT_CSV = OUTPUT_DIR / "top_hotspots_recent.csv"
 MAP_HTML = OUTPUT_DIR / "traffic_hotspots_poc.html"
+HOTSPOT_NAME_CACHE = ROOT / "data" / "processed" / "hotspot_name_cache.json"
 
 # Approximate grid size for hotspot aggregation.
 GRID_SIZE_DEG = 0.002
 TOP_N_MARKERS = 120
 RECENT_YEARS_WINDOW = 5
+MAX_GEOCODE_LOOKUPS_PER_RUN = 120
 
 TYPE_LABELS = {
     "MA": "Motor vehicle",
@@ -270,6 +274,96 @@ def build_type_mix_lines(type_counts):
     return "<br>".join(lines)
 
 
+def hotspot_key(lat, lon):
+    return f"{lat:.5f},{lon:.5f}"
+
+
+def load_name_cache(path: Path):
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def save_name_cache(path: Path, cache):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _compose_localized_name(payload):
+    address = payload.get("address") or {}
+    road = (
+        address.get("road")
+        or address.get("pedestrian")
+        or address.get("cycleway")
+        or address.get("path")
+        or address.get("footway")
+    )
+    area = (
+        address.get("suburb")
+        or address.get("city_district")
+        or address.get("neighbourhood")
+        or address.get("quarter")
+        or address.get("city")
+    )
+    if road and area:
+        return f"{road}, {area}"
+    if road:
+        return road
+    if area:
+        return area
+    display_name = payload.get("display_name") or ""
+    if display_name:
+        return display_name.split(",")[0].strip()
+    return ""
+
+
+def reverse_geocode_name(lat, lon, timeout=8):
+    url = "https://nominatim.openstreetmap.org/reverse"
+    params = {
+        "format": "jsonv2",
+        "lat": f"{lat:.6f}",
+        "lon": f"{lon:.6f}",
+        "zoom": "17",
+        "accept-language": "fi,sv,en",
+    }
+    headers = {"User-Agent": "hki-traffic-hotspots-poc/1.0"}
+    resp = requests.get(url, params=params, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    return _compose_localized_name(resp.json())
+
+
+def enrich_hotspot_names(layer_specs, cache_path: Path, max_lookups=MAX_GEOCODE_LOOKUPS_PER_RUN):
+    cache = load_name_cache(cache_path)
+    lookups = 0
+    for spec in layer_specs:
+        for hotspot in spec["hotspots"][:TOP_N_MARKERS]:
+            key = hotspot_key(hotspot["lat"], hotspot["lon"])
+            if key in cache:
+                hotspot["name"] = cache[key]
+                continue
+            if lookups >= max_lookups:
+                hotspot["name"] = ""
+                continue
+            try:
+                name = reverse_geocode_name(hotspot["lat"], hotspot["lon"])
+                cache[key] = name
+                hotspot["name"] = name
+                lookups += 1
+                time.sleep(1.0)
+            except Exception:
+                hotspot["name"] = ""
+    save_name_cache(cache_path, cache)
+    return lookups, len(cache)
+
+
 def add_hotspot_layer(map_obj, points, hotspots, layer_name, year_label, show):
     layer = folium.FeatureGroup(name=layer_name, show=show)
     HeatMap([[lat, lon] for lat, lon, _, _, _ in points], radius=10, blur=14, min_opacity=0.25).add_to(layer)
@@ -287,6 +381,7 @@ def add_hotspot_layer(map_obj, points, hotspots, layer_name, year_label, show):
         tooltip_html = (
             '<div style="min-width: 180px;">'
             f"<b>Hotspot #{idx}</b><br>"
+            f"{html.escape(h.get('name') or 'Location name unavailable')}<br>"
             f"Accidents: {h['count']}<br>"
             f"Severity-weighted score: {h['weighted_score']}<br>"
             f"Severity mix (1/2/3): {h['sev_1']}/{h['sev_2']}/{h['sev_3']}<br>"
@@ -318,6 +413,7 @@ def add_hotspot_layer(map_obj, points, hotspots, layer_name, year_label, show):
                     f"severity bucket {count_bucket_label(h['count'])}"
                 ),
                 "html": tooltip_html,
+                "name": h.get("name", ""),
                 "lat": round(h["lat"], 6),
                 "lon": round(h["lon"], 6),
             }
@@ -566,7 +662,10 @@ def add_accessibility_panel(map_obj, map_name, marker_records, top_records):
     <div id="a11y-details" role="dialog" aria-live="polite" aria-label="Hotspot details panel" tabindex="-1">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
         <b>Hotspot Details</b>
-        <button id="a11y-close" aria-label="Close hotspot details" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Close</button>
+        <div style="display:flex; gap:6px;">
+          <button id="a11y-minimize" aria-expanded="true" aria-label="Collapse hotspot details" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Hide</button>
+          <button id="a11y-close" aria-label="Close hotspot details" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Close</button>
+        </div>
       </div>
       <div id="a11y-details-body"></div>
     </div>
@@ -585,6 +684,7 @@ def add_accessibility_panel(map_obj, map_name, marker_records, top_records):
       var panel = document.getElementById('a11y-details');
       var panelBody = document.getElementById('a11y-details-body');
       var closeBtn = document.getElementById('a11y-close');
+      var minBtn = document.getElementById('a11y-minimize');
       var topBody = document.getElementById('a11y-toplist-body');
       var lastFocused = null;
 
@@ -658,6 +758,15 @@ def add_accessibility_panel(map_obj, map_name, marker_records, top_records):
         closeBtn.addEventListener('click', function() {{
           if (panel) panel.style.display = 'none';
           if (lastFocused) lastFocused.focus();
+        }});
+      }}
+
+      if (minBtn && panelBody) {{
+        minBtn.addEventListener('click', function() {{
+          var hidden = panelBody.style.display === 'none';
+          panelBody.style.display = hidden ? 'block' : 'none';
+          minBtn.textContent = hidden ? 'Hide' : 'Show';
+          minBtn.setAttribute('aria-expanded', hidden ? 'true' : 'false');
         }});
       }}
     }});
@@ -767,6 +876,7 @@ def main():
             }
         )
 
+    lookups, cached = enrich_hotspot_names(layer_specs=layer_specs, cache_path=HOTSPOT_NAME_CACHE)
     m = build_map(all_points, layer_specs)
     m.save(str(MAP_HTML))
 
@@ -778,6 +888,7 @@ def main():
     print(f"Hotspots CSV: {HOTSPOTS_CSV}")
     print(f"Recent hotspots CSV: {HOTSPOTS_RECENT_CSV}")
     print(f"Top recent hotspots CSV: {TOP_HOTSPOTS_RECENT_CSV}")
+    print(f"Reverse geocoded names this run: {lookups}, cache size: {cached}")
     print(f"Map HTML: {MAP_HTML}")
 
 

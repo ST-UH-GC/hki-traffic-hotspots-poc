@@ -61,6 +61,7 @@ make all
 - Keyboard/touch accessible details panel opens from marker click/focus or top-hotspots list
 - Top-hotspots fallback list is included for non-hover interaction
 - On-map explainer documents severity levels and color thresholds
+- Localized hotspot names are reverse-geocoded and cached in `data/processed/hotspot_name_cache.json`
 
 ## Current PoC limitations
 
