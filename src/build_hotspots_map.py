@@ -70,6 +70,10 @@ def grid_cell(lat: float, lon: float):
     return (math.floor(lat / GRID_SIZE_DEG), math.floor(lon / GRID_SIZE_DEG))
 
 
+def cell_id(cell):
+    return f"{cell[0]}:{cell[1]}"
+
+
 def build_hotspots(points, year_from=None, year_to=None):
     cells = defaultdict(
         lambda: {
@@ -115,10 +119,11 @@ def build_hotspots(points, year_from=None, year_to=None):
             rec["type_MP"] += 1
 
     hotspots = []
-    for rec in cells.values():
+    for cell, rec in cells.items():
         count = rec["count"]
         hotspots.append(
             {
+                "cell_id": cell_id(cell),
                 "count": count,
                 "weighted_score": round(rec["weighted"], 2),
                 "lat": rec["lat_sum"] / count,
@@ -278,6 +283,17 @@ def hotspot_key(lat, lon):
     return f"{lat:.5f},{lon:.5f}"
 
 
+def spatial_key(lat, lon):
+    # Coarser fallback key to reuse names across very close yearly centroids.
+    return f"{lat:.4f},{lon:.4f}"
+
+
+def distance_sq(lat1, lon1, lat2, lon2):
+    dlat = lat1 - lat2
+    dlon = lon1 - lon2
+    return dlat * dlat + dlon * dlon
+
+
 def load_name_cache(path: Path):
     if not path.exists():
         return {}
@@ -343,25 +359,83 @@ def reverse_geocode_name(lat, lon, timeout=8):
 def enrich_hotspot_names(layer_specs, cache_path: Path, max_lookups=MAX_GEOCODE_LOOKUPS_PER_RUN):
     cache = load_name_cache(cache_path)
     lookups = 0
+
+    # First pass: load known cached names across all layers.
     for spec in layer_specs:
         for hotspot in spec["hotspots"][:TOP_N_MARKERS]:
             key = hotspot_key(hotspot["lat"], hotspot["lon"])
             if key in cache:
                 hotspot["name"] = cache[key]
-                continue
-            if lookups >= max_lookups:
+            else:
                 hotspot["name"] = ""
-                continue
-            try:
-                name = reverse_geocode_name(hotspot["lat"], hotspot["lon"])
-                cache[key] = name
-                hotspot["name"] = name
-                lookups += 1
-                time.sleep(1.0)
-            except Exception:
-                hotspot["name"] = ""
+
+    # Lookup pass: spread coverage by rank (round-robin through layers).
+    candidates = []
+    for rank in range(TOP_N_MARKERS):
+        for spec in layer_specs:
+            if rank < len(spec["hotspots"]):
+                candidates.append(spec["hotspots"][rank])
+
+    for hotspot in candidates:
+        if hotspot.get("name"):
+            continue
+        key = hotspot_key(hotspot["lat"], hotspot["lon"])
+        if key in cache:
+            hotspot["name"] = cache[key]
+            continue
+        if lookups >= max_lookups:
+            break
+        try:
+            name = reverse_geocode_name(hotspot["lat"], hotspot["lon"])
+            cache[key] = name
+            hotspot["name"] = name
+            lookups += 1
+            time.sleep(1.0)
+        except Exception:
+            hotspot["name"] = ""
+
     save_name_cache(cache_path, cache)
     return lookups, len(cache)
+
+
+def propagate_hotspot_names_from_all_years(layer_specs):
+    if not layer_specs:
+        return 0
+
+    canonical = layer_specs[0]["hotspots"][:TOP_N_MARKERS]
+    by_cell = {}
+    by_spatial = {}
+    named_points = []
+    for h in canonical:
+        name = (h.get("name") or "").strip()
+        if not name:
+            continue
+        by_cell[h.get("cell_id")] = name
+        by_spatial[spatial_key(h["lat"], h["lon"])] = name
+        named_points.append((h["lat"], h["lon"], name))
+
+    filled = 0
+    for spec in layer_specs[1:]:
+        for h in spec["hotspots"][:TOP_N_MARKERS]:
+            if (h.get("name") or "").strip():
+                continue
+            name = by_cell.get(h.get("cell_id")) or by_spatial.get(spatial_key(h["lat"], h["lon"]))
+            if not name and named_points:
+                # Last fallback: nearest named all-years hotspot.
+                best_name = ""
+                best_dist = 10**9
+                for lat, lon, n in named_points:
+                    dist = distance_sq(h["lat"], h["lon"], lat, lon)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_name = n
+                if best_name:
+                    name = best_name if best_dist <= 0.000025 else f"Near {best_name}"
+            if not name:
+                continue
+            h["name"] = name
+            filled += 1
+    return filled
 
 
 def add_hotspot_layer(map_obj, points, hotspots, layer_name, year_label, show):
@@ -378,10 +452,10 @@ def add_hotspot_layer(map_obj, points, hotspots, layer_name, year_label, show):
         }
         pie_svg = build_type_pie_svg(type_counts)
         type_mix_lines = build_type_mix_lines(type_counts)
+        location_name = h.get("name") or f"{h['lat']:.5f}, {h['lon']:.5f}"
         tooltip_html = (
             '<div style="min-width: 180px;">'
-            f"<b>Hotspot #{idx}</b><br>"
-            f"{html.escape(h.get('name') or 'Location name unavailable')}<br>"
+            f"<b>{html.escape(location_name)}</b><br>"
             f"Accidents: {h['count']}<br>"
             f"Severity-weighted score: {h['weighted_score']}<br>"
             f"Severity mix (1/2/3): {h['sev_1']}/{h['sev_2']}/{h['sev_3']}<br>"
@@ -407,9 +481,9 @@ def add_hotspot_layer(map_obj, points, hotspots, layer_name, year_label, show):
             {
                 "marker_var": marker.get_name(),
                 "layer_label": layer_name,
-                "title": f"Hotspot #{idx}",
+                "title": location_name,
                 "aria_label": (
-                    f"Hotspot {idx}. {h['count']} accidents, years {year_label}, "
+                    f"{location_name}. {h['count']} accidents, years {year_label}, "
                     f"severity bucket {count_bucket_label(h['count'])}"
                 ),
                 "html": tooltip_html,
@@ -534,6 +608,10 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
       var yearLayers = {{
         {year_map_js}
       }};
+      function emitSelection(payload) {{
+        window.__hkiSelection = payload;
+        window.dispatchEvent(new CustomEvent('hki:selection-changed', {{ detail: payload }}));
+      }}
 
       function clearLayers() {{
         Object.keys(layers).forEach(function(key) {{
@@ -553,6 +631,7 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
         if (layers[label]) {{
           mapRef.addLayer(layers[label]);
         }}
+        emitSelection({{ mode: 'layer', label: label }});
       }}
       window.__hkiShowLayer = showLayer;
 
@@ -566,6 +645,7 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
             mapRef.addLayer(yearLayers[y]);
           }}
         }});
+        emitSelection({{ mode: 'range', from: from, to: to }});
       }}
 
       var select = document.getElementById('year-layer-select');
@@ -606,9 +686,48 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
     map_obj.get_root().html.add_child(folium.Element(html))
 
 
-def add_accessibility_panel(map_obj, map_name, marker_records, top_records):
+def build_category_leaders(marker_records, hotspots, year_label):
+    leaders = {}
+    cap = min(len(marker_records), len(hotspots), TOP_N_MARKERS)
+    for code, label in TYPE_LABELS.items():
+        key = f"type_{code}"
+        best_idx = None
+        best_value = -1
+        for i in range(cap):
+            value = hotspots[i].get(key, 0)
+            if value > best_value:
+                best_value = value
+                best_idx = i
+        if best_idx is None or best_value <= 0:
+            leaders[code] = None
+            continue
+        rec = marker_records[best_idx]
+        leaders[code] = {
+            "category_code": code,
+            "category_label": label,
+            "category_count": int(best_value),
+            "count": int(hotspots[best_idx]["count"]),
+            "year_label": year_label,
+            "marker_var": rec["marker_var"],
+            "layer_label": rec["layer_label"],
+            "title": rec["title"],
+            "html": rec["html"],
+        }
+    return leaders
+
+
+def add_accessibility_panel(
+    map_obj,
+    map_name,
+    marker_records,
+    top_records,
+    layer_category_leaders,
+    year_category_leaders,
+):
     marker_records_json = json.dumps(marker_records)
     top_records_json = json.dumps(top_records)
+    layer_category_leaders_json = json.dumps(layer_category_leaders)
+    year_category_leaders_json = json.dumps(year_category_leaders)
     html = f"""
     <style>
     #a11y-details {{
@@ -653,39 +772,74 @@ def add_accessibility_panel(map_obj, map_name, marker_records, top_records):
       background: #fafafa;
       cursor: pointer;
     }}
+    #category-leaders {{
+      position: fixed;
+      right: 352px;
+      bottom: 16px;
+      z-index: 9998;
+      width: 270px;
+      max-height: 34vh;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 8px 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      font-size: 12px;
+    }}
+    #category-leaders button {{
+      display: block;
+      width: 100%;
+      text-align: left;
+      margin: 0 0 4px 0;
+      padding: 4px 6px;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+      background: #fafafa;
+      cursor: pointer;
+    }}
     path.leaflet-interactive.a11y-focus {{
       stroke: #000 !important;
       stroke-width: 4 !important;
       outline: none !important;
     }}
     </style>
-    <div id="a11y-details" role="dialog" aria-live="polite" aria-label="Hotspot details panel" tabindex="-1">
+    <div id="a11y-details" role="dialog" aria-live="polite" aria-label="Location details panel" tabindex="-1">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-        <b>Hotspot Details</b>
+        <b>Location Details</b>
         <div style="display:flex; gap:6px;">
-          <button id="a11y-minimize" aria-expanded="true" aria-label="Collapse hotspot details" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Hide</button>
-          <button id="a11y-close" aria-label="Close hotspot details" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Close</button>
+          <button id="a11y-minimize" aria-expanded="true" aria-label="Collapse location details" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Hide</button>
+          <button id="a11y-close" aria-label="Close location details" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Close</button>
         </div>
       </div>
       <div id="a11y-details-body"></div>
     </div>
-    <div id="a11y-toplist" aria-label="Top hotspots accessible list">
-      <b>Top Hotspots (All Years)</b>
+    <div id="a11y-toplist" aria-label="Top locations accessible list">
+      <b>Top Locations (All Years)</b>
       <div style="margin: 4px 0 6px 0; color:#444;">
-        Keyboard/touch fallback: open hotspot details without hover.
+        Keyboard/touch fallback: open location details without hover.
       </div>
       <div id="a11y-toplist-body"></div>
+    </div>
+    <div id="category-leaders" aria-label="Category leaders panel">
+      <b>Category Leaders</b>
+      <div id="category-leaders-subtitle" style="margin: 4px 0 6px 0; color:#444;">All years</div>
+      <div id="category-leaders-body"></div>
     </div>
     <script>
     window.addEventListener('load', function() {{
       var mapRef = {map_name};
       var records = {marker_records_json};
       var topRecords = {top_records_json};
+      var layerCategoryLeaders = {layer_category_leaders_json};
+      var yearCategoryLeaders = {year_category_leaders_json};
       var panel = document.getElementById('a11y-details');
       var panelBody = document.getElementById('a11y-details-body');
       var closeBtn = document.getElementById('a11y-close');
       var minBtn = document.getElementById('a11y-minimize');
       var topBody = document.getElementById('a11y-toplist-body');
+      var catBody = document.getElementById('category-leaders-body');
+      var catSubtitle = document.getElementById('category-leaders-subtitle');
       var lastFocused = null;
 
       function renderDetails(rec) {{
@@ -697,12 +851,65 @@ def add_accessibility_panel(map_obj, map_name, marker_records, top_records):
 
       function openRecord(rec) {{
         var marker = window[rec.marker_var];
+        if (!marker && window.__hkiShowLayer && rec.layer_label) {{
+          window.__hkiShowLayer(rec.layer_label);
+          setTimeout(function() {{ openRecord(rec); }}, 30);
+          return;
+        }}
         if (!marker) return;
         var latLng = marker.getLatLng ? marker.getLatLng() : null;
         if (latLng) {{
           mapRef.panTo(latLng);
         }}
         renderDetails(rec);
+      }}
+
+      function mergeLeadersForRange(fromYear, toYear) {{
+        var from = Math.min(fromYear, toYear);
+        var to = Math.max(fromYear, toYear);
+        var merged = {{}};
+        ['MA', 'PP', 'JK', 'MP'].forEach(function(code) {{
+          merged[code] = null;
+        }});
+        for (var y = from; y <= to; y++) {{
+          var perYear = yearCategoryLeaders[String(y)];
+          if (!perYear) continue;
+          ['MA', 'PP', 'JK', 'MP'].forEach(function(code) {{
+            var cand = perYear[code];
+            if (!cand) return;
+            if (!merged[code] || cand.category_count > merged[code].category_count) {{
+              merged[code] = cand;
+            }}
+          }});
+        }}
+        return merged;
+      }}
+
+      function renderCategoryLeaders(leaders, subtitleText) {{
+        if (!catBody) return;
+        catBody.innerHTML = '';
+        if (catSubtitle) {{
+          catSubtitle.textContent = subtitleText || '';
+        }}
+        ['MA', 'PP', 'JK', 'MP'].forEach(function(code) {{
+          var rec = leaders ? leaders[code] : null;
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          if (!rec) {{
+            var label = (code === 'MA' ? 'Motor vehicle' : code === 'PP' ? 'Bicycle' : code === 'JK' ? 'Pedestrian' : 'Moped/motorcycle');
+            btn.textContent = label + ': no data in selection';
+            btn.disabled = true;
+            btn.style.opacity = '0.6';
+            catBody.appendChild(btn);
+            return;
+          }}
+          btn.textContent = rec.category_label + ': ' + rec.title + ' (' + rec.category_count + ' incidents of this type)';
+          btn.setAttribute('aria-label', 'Open ' + rec.category_label + ' leader at ' + rec.title);
+          btn.addEventListener('click', function() {{
+            openRecord(rec);
+          }});
+          catBody.appendChild(btn);
+        }});
       }}
 
       function decoratePath(path, rec) {{
@@ -754,6 +961,28 @@ def add_accessibility_panel(map_obj, map_name, marker_records, top_records):
         }});
       }}
 
+      window.addEventListener('hki:selection-changed', function(e) {{
+        var detail = (e && e.detail) || {{}};
+        if (detail.mode === 'layer' && detail.label) {{
+          renderCategoryLeaders(layerCategoryLeaders[detail.label], detail.label);
+          return;
+        }}
+        if (detail.mode === 'range') {{
+          var merged = mergeLeadersForRange(detail.from, detail.to);
+          renderCategoryLeaders(merged, 'Year range ' + detail.from + '-' + detail.to);
+        }}
+      }});
+
+      var initialSelection = window.__hkiSelection || {{ mode: 'layer', label: Object.keys(layerCategoryLeaders)[0] }};
+      if (initialSelection.mode === 'range') {{
+        renderCategoryLeaders(
+          mergeLeadersForRange(initialSelection.from, initialSelection.to),
+          'Year range ' + initialSelection.from + '-' + initialSelection.to
+        );
+      }} else {{
+        renderCategoryLeaders(layerCategoryLeaders[initialSelection.label], initialSelection.label || 'All years');
+      }}
+
       if (closeBtn) {{
         closeBtn.addEventListener('click', function() {{
           if (panel) panel.style.display = 'none';
@@ -784,6 +1013,8 @@ def build_map(all_points, layer_specs):
     year_layer_pairs = []
     marker_records = []
     top_records = []
+    layer_category_leaders = {}
+    year_category_leaders = {}
     for idx, spec in enumerate(layer_specs):
         layer, layer_marker_records = add_hotspot_layer(
             map_obj=m,
@@ -794,6 +1025,13 @@ def build_map(all_points, layer_specs):
             show=(idx == 0),
         )
         marker_records.extend(layer_marker_records)
+        layer_category_leaders[spec["label"]] = build_category_leaders(
+            marker_records=layer_marker_records,
+            hotspots=spec["hotspots"],
+            year_label=spec["year_label"],
+        )
+        if spec.get("year") is not None:
+            year_category_leaders[str(spec["year"])] = layer_category_leaders[spec["label"]]
         if idx == 0:
             top_records = [
                 {
@@ -825,6 +1063,8 @@ def build_map(all_points, layer_specs):
         map_name=m.get_name(),
         marker_records=marker_records,
         top_records=top_records,
+        layer_category_leaders=layer_category_leaders,
+        year_category_leaders=year_category_leaders,
     )
     return m
 
@@ -877,6 +1117,7 @@ def main():
         )
 
     lookups, cached = enrich_hotspot_names(layer_specs=layer_specs, cache_path=HOTSPOT_NAME_CACHE)
+    propagated = propagate_hotspot_names_from_all_years(layer_specs=layer_specs)
     m = build_map(all_points, layer_specs)
     m.save(str(MAP_HTML))
 
@@ -889,6 +1130,7 @@ def main():
     print(f"Recent hotspots CSV: {HOTSPOTS_RECENT_CSV}")
     print(f"Top recent hotspots CSV: {TOP_HOTSPOTS_RECENT_CSV}")
     print(f"Reverse geocoded names this run: {lookups}, cache size: {cached}")
+    print(f"Names propagated from all-years layer: {propagated}")
     print(f"Map HTML: {MAP_HTML}")
 
 
