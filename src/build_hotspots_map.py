@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import csv
 import html
+import json
 import math
 from collections import defaultdict
 from pathlib import Path
@@ -177,6 +178,31 @@ def color_for_count(count):
     return COUNT_COLOR_BINS[-1][1]
 
 
+def count_bucket_label(count):
+    if count <= 10:
+        return "1-10"
+    if count <= 30:
+        return "11-30"
+    if count <= 60:
+        return "31-60"
+    if count <= 120:
+        return "61-120"
+    return "121+"
+
+
+def marker_stroke_style(count):
+    # Add non-color differences for accessibility.
+    if count <= 10:
+        return {"dash_array": None, "weight": 2}
+    if count <= 30:
+        return {"dash_array": "2,4", "weight": 2}
+    if count <= 60:
+        return {"dash_array": "4,4", "weight": 2}
+    if count <= 120:
+        return {"dash_array": "1,5", "weight": 2}
+    return {"dash_array": None, "weight": 3}
+
+
 def marker_radius(count):
     # Mild growth with count, capped for readability.
     return max(4.0, min(9.0, 3.8 + math.log(max(count, 1), 2) * 0.7))
@@ -247,6 +273,7 @@ def build_type_mix_lines(type_counts):
 def add_hotspot_layer(map_obj, points, hotspots, layer_name, year_label, show):
     layer = folium.FeatureGroup(name=layer_name, show=show)
     HeatMap([[lat, lon] for lat, lon, _, _, _ in points], radius=10, blur=14, min_opacity=0.25).add_to(layer)
+    marker_records = []
 
     for idx, h in enumerate(hotspots[:TOP_N_MARKERS], start=1):
         type_counts = {
@@ -268,18 +295,35 @@ def add_hotspot_layer(map_obj, points, hotspots, layer_name, year_label, show):
             f"<div>{html.escape(type_mix_lines).replace('&lt;br&gt;', '<br>')}</div>"
             "</div>"
         )
-        folium.CircleMarker(
+        stroke_style = marker_stroke_style(h["count"])
+        marker = folium.CircleMarker(
             location=[h["lat"], h["lon"]],
             radius=marker_radius(h["count"]),
             color=color_for_count(h["count"]),
             fill=True,
             fill_color=color_for_count(h["count"]),
             fill_opacity=0.9,
-            weight=2,
-            tooltip=folium.Tooltip(tooltip_html, sticky=True),
-        ).add_to(layer)
+            weight=stroke_style["weight"],
+            dash_array=stroke_style["dash_array"],
+            tooltip=folium.Tooltip(tooltip_html, sticky=False),
+        )
+        marker.add_to(layer)
+        marker_records.append(
+            {
+                "marker_var": marker.get_name(),
+                "layer_label": layer_name,
+                "title": f"Hotspot #{idx}",
+                "aria_label": (
+                    f"Hotspot {idx}. {h['count']} accidents, years {year_label}, "
+                    f"severity bucket {count_bucket_label(h['count'])}"
+                ),
+                "html": tooltip_html,
+                "lat": round(h["lat"], 6),
+                "lon": round(h["lon"], 6),
+            }
+        )
     layer.add_to(map_obj)
-    return layer
+    return layer, marker_records
 
 
 def add_method_note(map_obj):
@@ -298,7 +342,7 @@ def add_method_note(map_obj):
     " id="method-box">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
         <b>Hotspot method (PoC V1)</b>
-        <button id="method-toggle" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Hide</button>
+        <button id="method-toggle" aria-expanded="true" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Hide</button>
       </div>
       <div id="method-content">
         Grid size: {GRID_SIZE_DEG} deg<br>
@@ -322,6 +366,7 @@ def add_method_note(map_obj):
         var hidden = content.style.display === 'none';
         content.style.display = hidden ? 'block' : 'none';
         toggleBtn.textContent = hidden ? 'Hide' : 'Show';
+        toggleBtn.setAttribute('aria-expanded', hidden ? 'true' : 'false');
       }});
     }});
     </script>
@@ -364,20 +409,20 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
         min-width: 280px;
     ">
       <label for="year-layer-select" style="font-weight: 600; margin-right: 8px;">Single year:</label>
-      <select id="year-layer-select" style="font-size: 12px; width: 165px;">{options}</select>
+      <select id="year-layer-select" aria-label="Single year layer selection" style="font-size: 12px; width: 165px;">{options}</select>
       <div style="margin-top: 8px; border-top: 1px solid #ddd; padding-top: 8px;">
         <div style="font-weight: 600; margin-bottom: 4px;">Year range (slider)</div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-          <span style="width:44px;">From</span>
-          <input type="range" id="year-from" min="{year_min}" max="{year_max}" value="{year_min}" style="flex:1;">
+          <label for="year-from" style="width:44px;">From</label>
+          <input type="range" id="year-from" aria-label="From year" min="{year_min}" max="{year_max}" value="{year_min}" style="flex:1;">
           <span id="year-from-value">{year_min}</span>
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-          <span style="width:44px;">To</span>
-          <input type="range" id="year-to" min="{year_min}" max="{year_max}" value="{year_min}" style="flex:1; direction: rtl;">
+          <label for="year-to" style="width:44px;">To</label>
+          <input type="range" id="year-to" aria-label="To year" min="{year_min}" max="{year_max}" value="{year_min}" style="flex:1; direction: rtl;">
           <span id="year-to-value">{year_max}</span>
         </div>
-        <button id="year-range-apply" style="font-size: 12px; padding: 3px 8px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">
+        <button id="year-range-apply" aria-label="Apply selected year range" style="font-size: 12px; padding: 3px 8px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">
           Apply range
         </button>
       </div>
@@ -413,6 +458,7 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
           mapRef.addLayer(layers[label]);
         }}
       }}
+      window.__hkiShowLayer = showLayer;
 
       function showRange(fromYear, toYear) {{
         clearLayers();
@@ -464,6 +510,162 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
     map_obj.get_root().html.add_child(folium.Element(html))
 
 
+def add_accessibility_panel(map_obj, map_name, marker_records, top_records):
+    marker_records_json = json.dumps(marker_records)
+    top_records_json = json.dumps(top_records)
+    html = f"""
+    <style>
+    #a11y-details {{
+      position: fixed;
+      right: 16px;
+      top: 188px;
+      z-index: 9999;
+      width: 320px;
+      max-height: 56vh;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 8px 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      display: none;
+      font-size: 12px;
+    }}
+    #a11y-toplist {{
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 9998;
+      width: 320px;
+      max-height: 34vh;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 8px 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      font-size: 12px;
+    }}
+    #a11y-toplist button {{
+      display: block;
+      width: 100%;
+      text-align: left;
+      margin: 0 0 4px 0;
+      padding: 4px 6px;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+      background: #fafafa;
+      cursor: pointer;
+    }}
+    path.leaflet-interactive.a11y-focus {{
+      stroke: #000 !important;
+      stroke-width: 4 !important;
+      outline: none !important;
+    }}
+    </style>
+    <div id="a11y-details" role="dialog" aria-live="polite" aria-label="Hotspot details panel" tabindex="-1">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <b>Hotspot Details</b>
+        <button id="a11y-close" aria-label="Close hotspot details" style="font-size:11px; padding:2px 6px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">Close</button>
+      </div>
+      <div id="a11y-details-body"></div>
+    </div>
+    <div id="a11y-toplist" aria-label="Top hotspots accessible list">
+      <b>Top Hotspots (All Years)</b>
+      <div style="margin: 4px 0 6px 0; color:#444;">
+        Keyboard/touch fallback: open hotspot details without hover.
+      </div>
+      <div id="a11y-toplist-body"></div>
+    </div>
+    <script>
+    window.addEventListener('load', function() {{
+      var mapRef = {map_name};
+      var records = {marker_records_json};
+      var topRecords = {top_records_json};
+      var panel = document.getElementById('a11y-details');
+      var panelBody = document.getElementById('a11y-details-body');
+      var closeBtn = document.getElementById('a11y-close');
+      var topBody = document.getElementById('a11y-toplist-body');
+      var lastFocused = null;
+
+      function renderDetails(rec) {{
+        if (!panel || !panelBody) return;
+        panelBody.innerHTML = rec.html;
+        panel.style.display = 'block';
+        panel.focus();
+      }}
+
+      function openRecord(rec) {{
+        var marker = window[rec.marker_var];
+        if (!marker) return;
+        var latLng = marker.getLatLng ? marker.getLatLng() : null;
+        if (latLng) {{
+          mapRef.panTo(latLng);
+        }}
+        renderDetails(rec);
+      }}
+
+      function decoratePath(path, rec) {{
+        if (!path || path.dataset.a11yBound === '1') return;
+        path.setAttribute('tabindex', '0');
+        path.setAttribute('role', 'button');
+        path.setAttribute('aria-label', rec.aria_label);
+        path.dataset.a11yBound = '1';
+        path.addEventListener('keydown', function(e) {{
+          if (e.key === 'Enter' || e.key === ' ') {{
+            e.preventDefault();
+            openRecord(rec);
+          }}
+        }});
+        path.addEventListener('focus', function() {{
+          path.classList.add('a11y-focus');
+          lastFocused = path;
+        }});
+        path.addEventListener('blur', function() {{
+          path.classList.remove('a11y-focus');
+        }});
+      }}
+
+      function bindRecord(rec) {{
+        var marker = window[rec.marker_var];
+        if (!marker) return;
+        marker.on('click', function() {{ openRecord(rec); }});
+        marker.on('add', function() {{
+          if (marker._path) decoratePath(marker._path, rec);
+        }});
+        if (marker._path) decoratePath(marker._path, rec);
+      }}
+
+      records.forEach(bindRecord);
+
+      if (topBody) {{
+        topRecords.forEach(function(rec) {{
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = rec.title + ' - ' + rec.summary;
+          btn.setAttribute('aria-label', 'Open details for ' + rec.title);
+          btn.addEventListener('click', function() {{
+            if (window.__hkiShowLayer && rec.layer_label) {{
+              window.__hkiShowLayer(rec.layer_label);
+            }}
+            setTimeout(function() {{ openRecord(rec); }}, 30);
+          }});
+          topBody.appendChild(btn);
+        }});
+      }}
+
+      if (closeBtn) {{
+        closeBtn.addEventListener('click', function() {{
+          if (panel) panel.style.display = 'none';
+          if (lastFocused) lastFocused.focus();
+        }});
+      }}
+    }});
+    </script>
+    """
+    map_obj.get_root().html.add_child(folium.Element(html))
+
+
 def build_map(all_points, layer_specs):
     center_lat = sum(p[0] for p in all_points) / len(all_points)
     center_lon = sum(p[1] for p in all_points) / len(all_points)
@@ -471,8 +673,10 @@ def build_map(all_points, layer_specs):
     m = folium.Map(location=[center_lat, center_lon], zoom_start=11, tiles="CartoDB positron")
     layer_name_pairs = []
     year_layer_pairs = []
+    marker_records = []
+    top_records = []
     for idx, spec in enumerate(layer_specs):
-        layer = add_hotspot_layer(
+        layer, layer_marker_records = add_hotspot_layer(
             map_obj=m,
             points=spec["points"],
             hotspots=spec["hotspots"],
@@ -480,6 +684,18 @@ def build_map(all_points, layer_specs):
             year_label=spec["year_label"],
             show=(idx == 0),
         )
+        marker_records.extend(layer_marker_records)
+        if idx == 0:
+            top_records = [
+                {
+                    "marker_var": rec["marker_var"],
+                    "layer_label": rec["layer_label"],
+                    "title": rec["title"],
+                    "summary": f"{spec['hotspots'][i]['count']} incidents, {spec['year_label']}",
+                    "html": rec["html"],
+                }
+                for i, rec in enumerate(layer_marker_records[:20])
+            ]
         layer_name_pairs.append((spec["label"], layer.get_name()))
         if spec.get("year") is not None:
             year_layer_pairs.append((spec["year"], layer.get_name()))
@@ -495,6 +711,12 @@ def build_map(all_points, layer_specs):
     )
 
     add_method_note(m)
+    add_accessibility_panel(
+        map_obj=m,
+        map_name=m.get_name(),
+        marker_records=marker_records,
+        top_records=top_records,
+    )
     return m
 
 

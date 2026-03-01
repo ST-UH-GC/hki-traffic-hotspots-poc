@@ -57,8 +57,9 @@ make all
   - all years
   - one selectable layer per year (dropdown in map UI)
 - Marker color is count-based (light-to-dark pink buckets)
-- Popup includes rank, count, weighted score, severity mix (1/2/3), and type-code totals
 - Mouseover tooltip includes a pie chart with vehicle-type mix (MA/PP/JK/MP)
+- Keyboard/touch accessible details panel opens from marker click/focus or top-hotspots list
+- Top-hotspots fallback list is included for non-hover interaction
 - On-map explainer documents severity levels and color thresholds
 
 ## Current PoC limitations
