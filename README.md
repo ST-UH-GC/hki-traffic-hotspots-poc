@@ -21,7 +21,7 @@ This PoC builds an interactive Helsinki traffic-accident hotspot map from open c
 From this folder:
 
 ```bash
-cd "/Users/tkalcan/Codex/HKI City API/poc-traffic-hotspots"
+cd hki-traffic-hotspots-poc
 make setup
 make all
 ```
@@ -29,13 +29,13 @@ make all
 Then open:
 
 ```bash
-open "/Users/tkalcan/Codex/HKI City API/poc-traffic-hotspots/output/traffic_hotspots_poc.html"
+open output/traffic_hotspots_poc.html
 ```
 
 ## One-command rebuild (if setup already done)
 
 ```bash
-cd "/Users/tkalcan/Codex/HKI City API/poc-traffic-hotspots"
+cd hki-traffic-hotspots-poc
 make all
 ```
 
