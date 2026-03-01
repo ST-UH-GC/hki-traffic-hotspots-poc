@@ -374,7 +374,7 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
           <span style="width:44px;">To</span>
-          <input type="range" id="year-to" min="{year_min}" max="{year_max}" value="{year_max}" style="flex:1;">
+          <input type="range" id="year-to" min="{year_min}" max="{year_max}" value="{year_min}" style="flex:1; direction: rtl;">
           <span id="year-to-value">{year_max}</span>
         </div>
         <button id="year-range-apply" style="font-size: 12px; padding: 3px 8px; border:1px solid #999; border-radius:4px; background:#f7f7f7; cursor:pointer;">
@@ -384,6 +384,8 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
     </div>
     <script>
     window.addEventListener('load', function() {{
+      var YEAR_MIN = {year_min};
+      var YEAR_MAX = {year_max};
       var mapRef = {map_name};
       var layers = {{
         {layer_map_js}
@@ -399,6 +401,10 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
             mapRef.removeLayer(layer);
           }}
         }});
+      }}
+
+      function logicalToYear(rawToValue) {{
+        return YEAR_MIN + YEAR_MAX - parseInt(rawToValue, 10);
       }}
 
       function showLayer(label) {{
@@ -440,13 +446,13 @@ def add_year_dropdown(map_obj, map_name, layer_name_pairs, year_layer_pairs, def
       }}
       if (toInput && toValue) {{
         toInput.addEventListener('input', function(e) {{
-          toValue.textContent = e.target.value;
+          toValue.textContent = logicalToYear(e.target.value);
         }});
       }}
       if (applyBtn && fromInput && toInput) {{
         applyBtn.addEventListener('click', function() {{
           var from = parseInt(fromInput.value, 10);
-          var to = parseInt(toInput.value, 10);
+          var to = logicalToYear(toInput.value);
           showRange(from, to);
         }});
       }}
